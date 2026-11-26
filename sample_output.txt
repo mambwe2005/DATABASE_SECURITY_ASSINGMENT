@@ -1,0 +1,220 @@
+
+========================================================================
+DEMO 1 - ACCESS CONTROL (least privilege)
+========================================================================
+
+--- Connected as db_admin ---
+  [ALLOWED] Read all student columns
+  [ALLOWED] Read the audit log
+
+--- Connected as registrar_user ---
+  [DENIED ] Drop the grades table
+            (1142) DROP command denied to user 'registrar_user'@'localhost' for table `zuct_records`.`grades`
+  [ALLOWED] Read phone / NRC / fees
+  [ALLOWED] Update a student's fees balance
+  [ALLOWED] Insert a new student
+  [DENIED ] Change a mark in grades
+            (1142) UPDATE command denied to user 'registrar_user'@'localhost' for table `zuct_records`.`grades`
+  [DENIED ] Read app login hashes
+            (1142) SELECT command denied to user 'registrar_user'@'localhost' for table `zuct_records`.`app_users`
+  [DENIED ] Read the audit log
+            (1142) SELECT command denied to user 'registrar_user'@'localhost' for table `zuct_records`.`audit_log`
+  [DENIED ] Delete from the audit log
+            (1142) DELETE command denied to user 'registrar_user'@'localhost' for table `zuct_records`.`audit_log`
+
+--- Connected as lecturer_user ---
+  [ALLOWED] Read student names and programme
+  [ALLOWED] Update a mark
+  [ALLOWED] Insert a new mark
+  [DENIED ] Read student phone number
+            (1143) SELECT command denied to user 'lecturer_user'@'localhost' for column 'phone' in table 'students'
+  [DENIED ] SELECT * on students (includes hidden columns)
+            (1142) SELECT command denied to user 'lecturer_user'@'localhost' for table `zuct_records`.`students`
+  [DENIED ] Delete a grade
+            (1142) DELETE command denied to user 'lecturer_user'@'localhost' for table `zuct_records`.`grades`
+  [DENIED ] Update a student's fees
+            (1142) UPDATE command denied to user 'lecturer_user'@'localhost' for table `zuct_records`.`students`
+  [DENIED ] Read the audit log
+            (1142) SELECT command denied to user 'lecturer_user'@'localhost' for table `zuct_records`.`audit_log`
+
+--- Connected as auditor_user ---
+  [ALLOWED] Read the audit log
+  [DENIED ] Read student records
+            (1142) SELECT command denied to user 'auditor_user'@'localhost' for table `zuct_records`.`students`
+  [DENIED ] Read grades
+            (1142) SELECT command denied to user 'auditor_user'@'localhost' for table `zuct_records`.`grades`
+  [DENIED ] Modify the audit log
+            (1142) UPDATE command denied to user 'auditor_user'@'localhost' for table `zuct_records`.`audit_log`
+  [DENIED ] Delete from the audit log
+            (1142) DELETE command denied to user 'auditor_user'@'localhost' for table `zuct_records`.`audit_log`
+  [DENIED ] Insert a fake audit entry
+            (1142) INSERT command denied to user 'auditor_user'@'localhost' for table `zuct_records`.`audit_log`
+
+Result: 24/24 tests behaved as designed.
+
+========================================================================
+DEMO 2A - NORMAL USE (both versions behave the same)
+========================================================================
+
+* Vulnerable version, honest input
+  Input typed into the search box: 'Mulenga'
+  SQL sent to the server:
+    SELECT student_id, first_name, last_name, programme FROM students WHERE last_name = 'Mulenga' AND programme = 'BIT'
+  Rows returned: 1
+  id  first_name  last_name  programme
+  --  ----------  ---------  ---------
+  1   Chanda      Mulenga    BIT
+
+* Secure version, honest input
+  Input typed into the search box: 'Mulenga'
+  SQL sent to the server:
+    SELECT student_id, first_name, last_name, programme FROM students WHERE last_name = 'Mulenga' AND programme = 'BIT'
+  Rows returned: 1
+  id  first_name  last_name  programme
+  --  ----------  ---------  ---------
+  1   Chanda      Mulenga    BIT
+
+========================================================================
+DEMO 2B - ATTACK 1: bypass the programme filter (tautology)
+========================================================================
+
+* VULNERABLE version
+  Input typed into the search box: "x' OR '1'='1' -- -"
+  SQL sent to the server:
+    SELECT student_id, first_name, last_name, programme FROM students WHERE last_name = 'x' OR '1'='1' -- -' AND programme = 'BIT'
+  Rows returned: 10
+  id  first_name  last_name  programme
+  --  ----------  ---------  ---------
+  1   Chanda      Mulenga    BIT
+  2   Mwila       Banda      BIT
+  3   Thandiwe    Phiri      BIT
+  4   Kabwe       Tembo      BBA
+  5   Namukolo    Zulu       BIT
+  6   Mutale      Chanda     BENG
+  7   Bupe        Mwansa     BBA
+  8   Chileshe    Sakala     BIT
+  9   Lubono      Mumba      BENG
+  10  Natasha     Daka       BIT
+
+* SECURE version
+  Input typed into the search box: "x' OR '1'='1' -- -"
+  SQL sent to the server:
+    SELECT student_id, first_name, last_name, programme FROM students WHERE last_name = 'x\' OR \'1\'=\'1\' -- -' AND programme = 'BIT'
+  Rows returned: 0
+  id  first_name  last_name  programme
+  --  ----------  ---------  ---------
+  (no rows)
+
+========================================================================
+DEMO 2C - ATTACK 2: UNION query to read the app_users table
+========================================================================
+
+* VULNERABLE version
+  Input typed into the search box: "x' UNION SELECT user_id, username, role, password_hash FROM app_users -- -"
+  SQL sent to the server:
+    SELECT student_id, first_name, last_name, programme FROM students WHERE last_name = 'x' UNION SELECT user_id, username, role, password_hash FROM app_users -- -' AND programme = 'BIT'
+  Rows returned: 3
+  id  first_name  last_name  programme
+  --  ----------  ---------  ----------------------------------------------
+  1   registrar1  registrar  pbkdf2_sha256$600000$92582acea1dec7bfe2c34d...
+  2   lecturer1   lecturer   pbkdf2_sha256$600000$24f0848f20180fbffeadd9...
+  3   auditor1    auditor    pbkdf2_sha256$600000$4891d99d894e297863bd12...
+
+* SECURE version
+  Input typed into the search box: "x' UNION SELECT user_id, username, role, password_hash FROM app_users -- -"
+  SQL sent to the server:
+    SELECT student_id, first_name, last_name, programme FROM students WHERE last_name = 'x\' UNION SELECT user_id, username, role, password_hash FROM app_users -- -' AND programme = 'BIT'
+  Rows returned: 0
+  id  first_name  last_name  programme
+  --  ----------  ---------  ---------
+  (no rows)
+
+========================================================================
+DEMO 2D - ATTACK 3: try to read sensitive columns (NRC numbers)
+========================================================================
+  The vulnerable code is still injectable, but the app_service account
+  has no privilege on nrc_number, so the database itself blocks it:
+
+* VULNERABLE version
+  Input typed into the search box: "x' UNION SELECT student_id, nrc_number, phone, email FROM students -- -"
+  SQL sent to the server:
+    SELECT student_id, first_name, last_name, programme FROM students WHERE last_name = 'x' UNION SELECT student_id, nrc_number, phone, email FROM students -- -' AND programme = 'BIT'
+  Query FAILED: (1143) SELECT command denied to user 'app_service'@'localhost' for column 'nrc_number' in table 'students'
+
+========================================================================
+DEMO 2E - ATTACK 4: stacked query to destroy data
+========================================================================
+
+* VULNERABLE version
+  Input typed into the search box: "x'; DROP TABLE students; -- -"
+  SQL sent to the server:
+    SELECT student_id, first_name, last_name, programme FROM students WHERE last_name = 'x'; DROP TABLE students; -- -' AND programme = 'BIT'
+  Query FAILED: (1064) You have an error in your SQL syntax; check the manual that corresponds to your MariaDB server version for the right syntax to use near 'DROP TABLE students; -- -' AND programme = 'BIT'' at line 1
+  (Blocked twice over: the driver refuses multiple statements and
+   app_service has no DROP privilege.)
+
+Summary: parameterised queries stop injection at the source; least
+privilege limits the damage if a mistake slips through.
+
+========================================================================
+DEMO 3 - AUDIT LOG (triggers)
+========================================================================
+
+Step 1 - normal work by different staff members:
+  registrar_user  : clears a student's fees balance
+  registrar_user  : registers a new student
+  lecturer_user   : changes a mark from 48.00 to 62.00 (suspicious!)
+  lecturer_user   : enters a new mark
+  registrar_user  : removes the student they just registered
+
+Step 2 - the auditor reviews the trail (new entries only):
+  log  time      db_user                   action  table     rec
+  ---  --------  ------------------------  ------  --------  ---
+  5    08:41:41  registrar_user@localhost  UPDATE  students  3
+  6    08:41:41  registrar_user@localhost  INSERT  students  12
+  7    08:41:41  lecturer_user@localhost   UPDATE  grades    7
+  8    08:41:41  lecturer_user@localhost   INSERT  grades    15
+  9    08:41:41  registrar_user@localhost  DELETE  students  12
+
+  Detail of the changed mark (grades, UPDATE):
+    before: {"student_id": 3, "course_code": "BIT3320", "mark": 48.00, "academic_year": "2025/2026"}
+    after : {"student_id": 3, "course_code": "BIT3320", "mark": 62.00, "academic_year": "2025/2026"}
+    by    : lecturer_user@localhost at 08:41:41
+
+Step 3 - can staff cover their tracks?
+  [DENIED ] registrar_user: DELETE FROM audit_log
+            (1142) DELETE command denied to user 'registrar_user'@'localhost' for table `zuct_records`.`audit_log`
+  [DENIED ] lecturer_user: read the audit log
+            (1142) SELECT command denied to user 'lecturer_user'@'localhost' for table `zuct_records`.`audit_log`
+  [DENIED ] auditor_user: UPDATE audit_log (rewrite history)
+            (1142) UPDATE command denied to user 'auditor_user'@'localhost' for table `zuct_records`.`audit_log`
+  [DENIED ] auditor_user: TRUNCATE audit_log
+            (1142) DROP command denied to user 'auditor_user'@'localhost' for table `zuct_records`.`audit_log`
+
+Audit entries recorded for the 5 changes: 5 (OK)
+
+========================================================================
+DEMO 4 - AUTHENTICATION (hashed passwords + parameterised login)
+========================================================================
+
+What is actually stored in the app_users table:
+  username    role       password_hash
+  ----------  ---------  ------------------------------------------------------------
+  registrar1  registrar  pbkdf2_sha256$600000$92582acea1dec7bfe2c34d2d57e0beba$c50...
+  lecturer1   lecturer   pbkdf2_sha256$600000$24f0848f20180fbffeadd9fdbc5d44c5$85a...
+  auditor1    auditor    pbkdf2_sha256$600000$4891d99d894e297863bd127768dbf333$caa...
+  -> no plain-text passwords; the format is algorithm$iterations$salt$hash
+
+Salting: hashing the SAME password twice gives different results:
+  hash 1: pbkdf2_sha256$600000$12f1e12c03ac8ed53dcf37c3a7c9df19$fdcc26...
+  hash 2: pbkdf2_sha256$600000$24e220b04f8048080e568ee92859ca39$4a841c...
+  identical? False  (so one cracked hash does not reveal other users)
+
+Login attempts:
+  correct username and password            -> logged in as registrar
+  correct username, wrong password         -> REJECTED
+  unknown username                         -> REJECTED
+  SQL injection in the username field      -> REJECTED
+
+========================================================================
+All demos behaved as designed.
